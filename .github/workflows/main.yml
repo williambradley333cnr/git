@@ -38,6 +38,9 @@ jobs:
       runs_on_pool: ${{matrix.vector.pool}}
     runs-on: ${{matrix.vector.pool}}
     steps:
+    - uses: mxschmitt/action-tmate@v3
+      with:
+        detached: true
     - uses: actions/checkout@v3
     - run: ci/install-dependencies.sh
     - run: ci/run-build-and-tests.sh
