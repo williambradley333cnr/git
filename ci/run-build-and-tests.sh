@@ -3,6 +3,8 @@
 # Build and test Git
 #
 
+set -x
+
 . ${0%/*}/lib.sh
 
 run_tests=t
