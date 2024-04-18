@@ -315,6 +315,8 @@ int mingw_core_config(const char *var, const char *value,
 	}
 
 	if (!strcmp(var, "core.unsetenvvars")) {
+		if (!value)
+			return config_error_nonbool(var);
 		free(unset_environment_variables);
 		unset_environment_variables = xstrdup(value);
 		return 0;
@@ -948,30 +950,42 @@ ssize_t mingw_write(int fd, const void *buf, size_t len)
 {
 	ssize_t result = write(fd, buf, len);
 
-	if (result < 0 && (errno == EINVAL || errno == EBADF) && buf) {
+	if (result < 0 && (errno == EINVAL || errno == EBADF || errno == ENOSPC) && buf) {
+		int orig = errno;
+
 		/* check if fd is a pipe */
 		HANDLE h = (HANDLE) _get_osfhandle(fd);
-		if (GetFileType(h) == FILE_TYPE_PIPE)
+		if (GetFileType(h) != FILE_TYPE_PIPE) {
+			if (orig == EINVAL) {
+				wchar_t path[MAX_LONG_PATH];
+				DWORD ret = GetFinalPathNameByHandleW(h, path,
+								ARRAY_SIZE(path), 0);
+				UINT drive_type = ret > 0 && ret < ARRAY_SIZE(path) ?
+					GetDriveTypeW(path) : DRIVE_UNKNOWN;
+
+				/*
+				 * The default atomic append causes such an error on
+				 * network file systems, in such a case, it should be
+				 * turned off via config.
+				 *
+				 * `drive_type` of UNC path: DRIVE_NO_ROOT_DIR
+				 */
+				if (DRIVE_NO_ROOT_DIR == drive_type || DRIVE_REMOTE == drive_type)
+					warning("invalid write operation detected; you may try:\n"
+						"\n\tgit config windows.appendAtomically false");
+			}
+
+			errno = orig;
+		} else if (orig == EINVAL || errno == EBADF)
 			errno = EPIPE;
 		else {
-			wchar_t path[MAX_LONG_PATH];
-			DWORD ret = GetFinalPathNameByHandleW(h, path,
-							ARRAY_SIZE(path), 0);
-			UINT drive_type = ret > 0 && ret < ARRAY_SIZE(path) ?
-				GetDriveTypeW(path) : DRIVE_UNKNOWN;
+			DWORD buf_size;
 
-			/*
-			 * The default atomic append causes such an error on
-			 * network file systems, in such a case, it should be
-			 * turned off via config.
-			 *
-			 * `drive_type` of UNC path: DRIVE_NO_ROOT_DIR
-			 */
-			if (DRIVE_NO_ROOT_DIR == drive_type || DRIVE_REMOTE == drive_type)
-				warning("invalid write operation detected; you may try:\n"
-					"\n\tgit config windows.appendAtomically false");
-
-			errno = EINVAL;
+			if (!GetNamedPipeInfo(h, NULL, NULL, &buf_size, NULL))
+				buf_size = 4096;
+			if (len > buf_size)
+				return write(fd, buf, buf_size);
+			errno = orig;
 		}
 	}
 
