@@ -3434,11 +3434,80 @@ typedef int (*files_fsck_refs_fn)(struct ref_store *ref_store,
 				  const char *refs_check_dir,
 				  struct dir_iterator *iter);
 
+/*
+ * Check the symref "referent" and "referent_path". For textual symref,
+ * "referent" would be the content after "refs:".
+ */
+static int files_fsck_symref_target(struct fsck_options *o,
+				    struct fsck_ref_report *report,
+				    struct strbuf *referent,
+				    struct strbuf *referent_path)
+{
+	size_t len = referent->len - 1;
+	const char *p = NULL;
+	struct stat st;
+	int ret = 0;
+
+	if (!skip_prefix(referent->buf, "refs/", &p)) {
+
+		ret = fsck_report_ref(o, report,
+				      FSCK_MSG_BAD_SYMREF_TARGET,
+				      "points to ref outside the refs directory");
+		goto out;
+	}
+
+	if (referent->buf[referent->len - 1] != '\n') {
+		ret = fsck_report_ref(o, report,
+				      FSCK_MSG_REF_MISSING_NEWLINE,
+				      "missing newline");
+		len++;
+	}
+
+	strbuf_rtrim(referent);
+	if (check_refname_format(referent->buf, 0)) {
+		ret = fsck_report_ref(o, report,
+				      FSCK_MSG_BAD_SYMREF_TARGET,
+				      "points to refname with invalid format");
+		goto out;
+	}
+
+	if (len != referent->len) {
+		ret = fsck_report_ref(o, report,
+				      FSCK_MSG_TRAILING_REF_CONTENT,
+				      "trailing garbage in ref");
+	}
+
+	/*
+	 * Missing target should not be treated as any error worthy event and
+	 * not even warn. It is a common case that a symbolic ref points to a
+	 * ref that does not exist yet. If the target ref does not exist, just
+	 * skip the check for the file type.
+	 */
+	if (lstat(referent_path->buf, &st))
+		goto out;
+
+	/*
+	 * We cannot distinguish whether "refs/heads/a" is directory or nots by
+	 * using "check_refname_format(referent->buf, 0)". Instead, we need to
+	 * check the file type of the target.
+	 */
+	if (S_ISDIR(st.st_mode)) {
+		ret = fsck_report_ref(o, report,
+				      FSCK_MSG_BAD_SYMREF_TARGET,
+				      "points to the directory");
+		goto out;
+	}
+
+out:
+	return ret;
+}
+
 static int files_fsck_refs_content(struct ref_store *ref_store,
 				   struct fsck_options *o,
 				   const char *refs_check_dir,
 				   struct dir_iterator *iter)
 {
+	struct strbuf referent_path = STRBUF_INIT;
 	struct strbuf ref_content = STRBUF_INIT;
 	struct strbuf referent = STRBUF_INIT;
 	struct strbuf refname = STRBUF_INIT;
@@ -3484,12 +3553,24 @@ static int files_fsck_refs_content(struct ref_store *ref_store,
 					      "trailing garbage in ref");
 			goto cleanup;
 		}
+	} else {
+		strbuf_addf(&referent_path, "%s/%s",
+			    ref_store->gitdir, referent.buf);
+		/*
+		 * the referent may contain the spaces and the newline, need to
+		 * trim for path.
+		 */
+		strbuf_rtrim(&referent_path);
+		ret = files_fsck_symref_target(o, &report,
+					       &referent,
+					       &referent_path);
 	}
 
 cleanup:
 	strbuf_release(&refname);
 	strbuf_release(&ref_content);
 	strbuf_release(&referent);
+	strbuf_release(&referent_path);
 	return ret;
 }
 

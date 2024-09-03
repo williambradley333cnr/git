@@ -209,4 +209,121 @@ test_expect_success 'regular ref content should be checked (aggregate)' '
 	test_cmp expect sorted_err
 '
 
+test_expect_success 'textual symref content should be checked (individual)' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	branch_dir_prefix=.git/refs/heads &&
+	tag_dir_prefix=.git/refs/tags &&
+	cd repo &&
+	test_commit default &&
+	mkdir -p "$branch_dir_prefix/a/b" &&
+
+	printf "ref: refs/heads/branch\n" >$branch_dir_prefix/branch-good &&
+	git refs verify 2>err &&
+	rm $branch_dir_prefix/branch-good &&
+	test_must_be_empty err &&
+
+	printf "ref: refs/heads/branch" >$branch_dir_prefix/branch-no-newline-1 &&
+	git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/heads/branch-no-newline-1: refMissingNewline: missing newline
+	EOF
+	rm $branch_dir_prefix/branch-no-newline-1 &&
+	test_cmp expect err &&
+
+	printf "ref: refs/heads/branch     " >$branch_dir_prefix/a/b/branch-trailing-1 &&
+	git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/heads/a/b/branch-trailing-1: refMissingNewline: missing newline
+	warning: refs/heads/a/b/branch-trailing-1: trailingRefContent: trailing garbage in ref
+	EOF
+	rm $branch_dir_prefix/a/b/branch-trailing-1 &&
+	test_cmp expect err &&
+
+	printf "ref: refs/heads/branch\n\n" >$branch_dir_prefix/a/b/branch-trailing-2 &&
+	git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/heads/a/b/branch-trailing-2: trailingRefContent: trailing garbage in ref
+	EOF
+	rm $branch_dir_prefix/a/b/branch-trailing-2 &&
+	test_cmp expect err &&
+
+	printf "ref: refs/heads/branch \n" >$branch_dir_prefix/a/b/branch-trailing-3 &&
+	git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/heads/a/b/branch-trailing-3: trailingRefContent: trailing garbage in ref
+	EOF
+	rm $branch_dir_prefix/a/b/branch-trailing-3 &&
+	test_cmp expect err &&
+
+	printf "ref: refs/heads/branch \n  " >$branch_dir_prefix/a/b/branch-complicated &&
+	git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/heads/a/b/branch-complicated: refMissingNewline: missing newline
+	warning: refs/heads/a/b/branch-complicated: trailingRefContent: trailing garbage in ref
+	EOF
+	rm $branch_dir_prefix/a/b/branch-complicated &&
+	test_cmp expect err &&
+
+	printf "ref: refs/heads/.branch\n" >$branch_dir_prefix/branch-bad-1 &&
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	error: refs/heads/branch-bad-1: badSymrefTarget: points to refname with invalid format
+	EOF
+	rm $branch_dir_prefix/branch-bad-1 &&
+	test_cmp expect err &&
+
+	printf "ref: reflogs/heads/main\n" >$branch_dir_prefix/branch-bad-2 &&
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	error: refs/heads/branch-bad-2: badSymrefTarget: points to ref outside the refs directory
+	EOF
+	rm $branch_dir_prefix/branch-bad-2 &&
+	test_cmp expect err &&
+
+	printf "ref: refs/heads/a\n" >$branch_dir_prefix/branch-bad-3 &&
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	error: refs/heads/branch-bad-3: badSymrefTarget: points to the directory
+	EOF
+	rm $branch_dir_prefix/branch-bad-3 &&
+	test_cmp expect err
+'
+
+test_expect_success 'textual symref content should be checked (aggregate)' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	branch_dir_prefix=.git/refs/heads &&
+	tag_dir_prefix=.git/refs/tags &&
+	cd repo &&
+	test_commit default &&
+	mkdir -p "$branch_dir_prefix/a/b" &&
+
+	printf "ref: refs/heads/branch\n" >$branch_dir_prefix/branch-good &&
+	printf "ref: refs/heads/branch" >$branch_dir_prefix/branch-no-newline-1 &&
+	printf "ref: refs/heads/branch     " >$branch_dir_prefix/a/b/branch-trailing-1 &&
+	printf "ref: refs/heads/branch\n\n" >$branch_dir_prefix/a/b/branch-trailing-2 &&
+	printf "ref: refs/heads/branch \n" >$branch_dir_prefix/a/b/branch-trailing-3 &&
+	printf "ref: refs/heads/branch \n  " >$branch_dir_prefix/a/b/branch-complicated &&
+	printf "ref: refs/heads/.branch\n" >$branch_dir_prefix/branch-bad-1 &&
+	printf "ref: reflogs/heads/main\n" >$branch_dir_prefix/branch-bad-2 &&
+	printf "ref: refs/heads/a\n" >$branch_dir_prefix/branch-bad-3 &&
+
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	error: refs/heads/branch-bad-1: badSymrefTarget: points to refname with invalid format
+	error: refs/heads/branch-bad-2: badSymrefTarget: points to ref outside the refs directory
+	error: refs/heads/branch-bad-3: badSymrefTarget: points to the directory
+	warning: refs/heads/a/b/branch-complicated: refMissingNewline: missing newline
+	warning: refs/heads/a/b/branch-complicated: trailingRefContent: trailing garbage in ref
+	warning: refs/heads/a/b/branch-trailing-1: refMissingNewline: missing newline
+	warning: refs/heads/a/b/branch-trailing-1: trailingRefContent: trailing garbage in ref
+	warning: refs/heads/a/b/branch-trailing-2: trailingRefContent: trailing garbage in ref
+	warning: refs/heads/a/b/branch-trailing-3: trailingRefContent: trailing garbage in ref
+	warning: refs/heads/branch-no-newline-1: refMissingNewline: missing newline
+	EOF
+	sort err >sorted_err &&
+	test_cmp expect sorted_err
+'
+
 test_done

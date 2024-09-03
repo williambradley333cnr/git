@@ -28,6 +28,10 @@
 `badRefName`::
 	(ERROR) A ref has an invalid format.
 
+`badSymrefTarget`::
+	(ERROR) The symref target points outside the ref directory or
+	the name of the symref target is invalid.
+
 `badTagName`::
 	(INFO) A tag has an invalid format.
 
