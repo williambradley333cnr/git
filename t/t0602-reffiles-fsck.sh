@@ -326,4 +326,101 @@ test_expect_success 'textual symref content should be checked (aggregate)' '
 	test_cmp expect sorted_err
 '
 
+test_expect_success SYMLINKS 'symlink symref content should be checked (individual)' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	branch_dir_prefix=.git/refs/heads &&
+	tag_dir_prefix=.git/refs/tags &&
+	cd repo &&
+	test_commit default &&
+	mkdir -p "$branch_dir_prefix/a/b" &&
+
+	ln -sf ./main $branch_dir_prefix/branch-symbolic-good &&
+	git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/heads/branch-symbolic-good: symlinkRef: use deprecated symbolic link for symref
+	EOF
+	rm $branch_dir_prefix/branch-symbolic-good &&
+	test_cmp expect err &&
+
+	ln -sf ../../../../branch $branch_dir_prefix/branch-symbolic-1 &&
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/heads/branch-symbolic-1: symlinkRef: use deprecated symbolic link for symref
+	error: refs/heads/branch-symbolic-1: badSymrefTarget: point to target outside gitdir
+	EOF
+	rm $branch_dir_prefix/branch-symbolic-1 &&
+	test_cmp expect err &&
+
+	ln -sf ../../logs/branch-bad $branch_dir_prefix/branch-symbolic-2 &&
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/heads/branch-symbolic-2: symlinkRef: use deprecated symbolic link for symref
+	error: refs/heads/branch-symbolic-2: badSymrefTarget: points to ref outside the refs directory
+	EOF
+	rm $branch_dir_prefix/branch-symbolic-2 &&
+	test_cmp expect err &&
+
+	ln -sf ./"branch   space" $branch_dir_prefix/branch-symbolic-3 &&
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/heads/branch-symbolic-3: symlinkRef: use deprecated symbolic link for symref
+	error: refs/heads/branch-symbolic-3: badSymrefTarget: points to refname with invalid format
+	EOF
+	rm $branch_dir_prefix/branch-symbolic-3 &&
+	test_cmp expect err &&
+
+	ln -sf ./".tag" $tag_dir_prefix/tag-symbolic-1 &&
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/tags/tag-symbolic-1: symlinkRef: use deprecated symbolic link for symref
+	error: refs/tags/tag-symbolic-1: badSymrefTarget: points to refname with invalid format
+	EOF
+	rm $tag_dir_prefix/tag-symbolic-1 &&
+	test_cmp expect err &&
+
+	ln -sf ./ $tag_dir_prefix/tag-symbolic-2 &&
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	warning: refs/tags/tag-symbolic-2: symlinkRef: use deprecated symbolic link for symref
+	error: refs/tags/tag-symbolic-2: badSymrefTarget: points to the directory
+	EOF
+	rm $tag_dir_prefix/tag-symbolic-2 &&
+	test_cmp expect err
+'
+
+test_expect_success SYMLINKS 'symlink symref content should be checked (aggregate)' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	branch_dir_prefix=.git/refs/heads &&
+	tag_dir_prefix=.git/refs/tags &&
+	cd repo &&
+	test_commit default &&
+	mkdir -p "$branch_dir_prefix/a/b" &&
+
+	ln -sf ./main $branch_dir_prefix/branch-symbolic-good &&
+	ln -sf ../../../../branch $branch_dir_prefix/branch-symbolic-1 &&
+	ln -sf ../../logs/branch-bad $branch_dir_prefix/branch-symbolic-2 &&
+	ln -sf ./"branch   space" $branch_dir_prefix/branch-symbolic-3 &&
+	ln -sf ./".tag" $tag_dir_prefix/tag-symbolic-1 &&
+	ln -sf ./ $tag_dir_prefix/tag-symbolic-2 &&
+
+	test_must_fail git refs verify 2>err &&
+	cat >expect <<-EOF &&
+	error: refs/heads/branch-symbolic-1: badSymrefTarget: point to target outside gitdir
+	error: refs/heads/branch-symbolic-2: badSymrefTarget: points to ref outside the refs directory
+	error: refs/heads/branch-symbolic-3: badSymrefTarget: points to refname with invalid format
+	error: refs/tags/tag-symbolic-1: badSymrefTarget: points to refname with invalid format
+	error: refs/tags/tag-symbolic-2: badSymrefTarget: points to the directory
+	warning: refs/heads/branch-symbolic-1: symlinkRef: use deprecated symbolic link for symref
+	warning: refs/heads/branch-symbolic-2: symlinkRef: use deprecated symbolic link for symref
+	warning: refs/heads/branch-symbolic-3: symlinkRef: use deprecated symbolic link for symref
+	warning: refs/heads/branch-symbolic-good: symlinkRef: use deprecated symbolic link for symref
+	warning: refs/tags/tag-symbolic-1: symlinkRef: use deprecated symbolic link for symref
+	warning: refs/tags/tag-symbolic-2: symlinkRef: use deprecated symbolic link for symref
+	EOF
+	sort err >sorted_err &&
+	test_cmp expect sorted_err
+'
+
 test_done

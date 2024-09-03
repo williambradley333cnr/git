@@ -1,4 +1,5 @@
 #include "../git-compat-util.h"
+#include "../abspath.h"
 #include "../copy.h"
 #include "../environment.h"
 #include "../gettext.h"
@@ -1950,10 +1951,13 @@ static int commit_ref_update(struct files_ref_store *refs,
 	return 0;
 }
 
+#ifdef NO_SYMLINK_HEAD
+#define create_ref_symlink(a, b) (-1)
+#else
 static int create_ref_symlink(struct ref_lock *lock, const char *target)
 {
 	int ret = -1;
-#ifndef NO_SYMLINK_HEAD
+
 	char *ref_path = get_locked_file_path(&lock->lk);
 	unlink(ref_path);
 	ret = symlink(target, ref_path);
@@ -1961,13 +1965,12 @@ static int create_ref_symlink(struct ref_lock *lock, const char *target)
 
 	if (ret)
 		fprintf(stderr, "no symlink - falling back to symbolic ref\n");
-#endif
 	return ret;
 }
+#endif
 
-static int create_symref_lock(struct files_ref_store *refs,
-			      struct ref_lock *lock, const char *refname,
-			      const char *target, struct strbuf *err)
+static int create_symref_lock(struct ref_lock *lock, const char *target,
+			      struct strbuf *err)
 {
 	if (!fdopen_lock_file(&lock->lk, "w")) {
 		strbuf_addf(err, "unable to fdopen %s: %s",
@@ -2583,8 +2586,7 @@ static int lock_ref_for_update(struct files_ref_store *refs,
 	}
 
 	if (update->new_target && !(update->flags & REF_LOG_ONLY)) {
-		if (create_symref_lock(refs, lock, update->refname,
-				       update->new_target, err)) {
+		if (create_symref_lock(lock, update->new_target, err)) {
 			ret = TRANSACTION_GENERIC_ERROR;
 			goto out;
 		}
@@ -3436,12 +3438,15 @@ typedef int (*files_fsck_refs_fn)(struct ref_store *ref_store,
 
 /*
  * Check the symref "referent" and "referent_path". For textual symref,
- * "referent" would be the content after "refs:".
+ * "referent" would be the content after "refs:". For symlink ref,
+ * "referent" would be the relative path agaignst "gitdir" which should
+ * be the same as the textual symref literally.
  */
 static int files_fsck_symref_target(struct fsck_options *o,
 				    struct fsck_ref_report *report,
 				    struct strbuf *referent,
-				    struct strbuf *referent_path)
+				    struct strbuf *referent_path,
+				    unsigned int symbolic_link)
 {
 	size_t len = referent->len - 1;
 	const char *p = NULL;
@@ -3456,14 +3461,16 @@ static int files_fsck_symref_target(struct fsck_options *o,
 		goto out;
 	}
 
-	if (referent->buf[referent->len - 1] != '\n') {
+	if (!symbolic_link && referent->buf[referent->len - 1] != '\n') {
 		ret = fsck_report_ref(o, report,
 				      FSCK_MSG_REF_MISSING_NEWLINE,
 				      "missing newline");
 		len++;
 	}
 
-	strbuf_rtrim(referent);
+	if (!symbolic_link)
+		strbuf_rtrim(referent);
+
 	if (check_refname_format(referent->buf, 0)) {
 		ret = fsck_report_ref(o, report,
 				      FSCK_MSG_BAD_SYMREF_TARGET,
@@ -3471,7 +3478,7 @@ static int files_fsck_symref_target(struct fsck_options *o,
 		goto out;
 	}
 
-	if (len != referent->len) {
+	if (!symbolic_link && len != referent->len) {
 		ret = fsck_report_ref(o, report,
 				      FSCK_MSG_TRAILING_REF_CONTENT,
 				      "trailing garbage in ref");
@@ -3509,9 +3516,11 @@ static int files_fsck_refs_content(struct ref_store *ref_store,
 {
 	struct strbuf referent_path = STRBUF_INIT;
 	struct strbuf ref_content = STRBUF_INIT;
+	struct strbuf abs_gitdir = STRBUF_INIT;
 	struct strbuf referent = STRBUF_INIT;
 	struct strbuf refname = STRBUF_INIT;
 	struct fsck_ref_report report = {0};
+	unsigned int symbolic_link = 0;
 	const char *trailing = NULL;
 	unsigned int type = 0;
 	int failure_errno = 0;
@@ -3521,8 +3530,37 @@ static int files_fsck_refs_content(struct ref_store *ref_store,
 	strbuf_addf(&refname, "%s/%s", refs_check_dir, iter->relative_path);
 	report.path = refname.buf;
 
-	if (S_ISLNK(iter->st.st_mode))
+	if (S_ISLNK(iter->st.st_mode)) {
+		const char* relative_referent_path;
+
+		symbolic_link = 1;
+		ret = fsck_report_ref(o, &report,
+				      FSCK_MSG_SYMLINK_REF,
+				      "use deprecated symbolic link for symref");
+
+		strbuf_add_absolute_path(&abs_gitdir, ref_store->gitdir);
+		strbuf_normalize_path(&abs_gitdir);
+		if (!is_dir_sep(abs_gitdir.buf[abs_gitdir.len - 1]))
+			strbuf_addch(&abs_gitdir, '/');
+
+		strbuf_add_real_path(&referent_path, iter->path.buf);
+
+		if (!skip_prefix(referent_path.buf,
+				 abs_gitdir.buf,
+				 &relative_referent_path)) {
+			ret = fsck_report_ref(o, &report,
+					      FSCK_MSG_BAD_SYMREF_TARGET,
+					      "point to target outside gitdir");
+			goto cleanup;
+		}
+
+		strbuf_addstr(&referent, relative_referent_path);
+		ret = files_fsck_symref_target(o, &report,
+					       &referent, &referent_path,
+					       symbolic_link);
+
 		goto cleanup;
+	}
 
 	if (strbuf_read_file(&ref_content, iter->path.buf, 0) < 0) {
 		ret = error_errno(_("%s/%s: unable to read the ref"),
@@ -3563,7 +3601,8 @@ static int files_fsck_refs_content(struct ref_store *ref_store,
 		strbuf_rtrim(&referent_path);
 		ret = files_fsck_symref_target(o, &report,
 					       &referent,
-					       &referent_path);
+					       &referent_path,
+					       symbolic_link);
 	}
 
 cleanup:
@@ -3571,6 +3610,7 @@ cleanup:
 	strbuf_release(&ref_content);
 	strbuf_release(&referent);
 	strbuf_release(&referent_path);
+	strbuf_release(&abs_gitdir);
 	return ret;
 }
 
