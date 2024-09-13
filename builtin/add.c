@@ -477,7 +477,7 @@ int cmd_add(int argc,
 
 	enable_fscache(0);
 	/* We do not really re-read the index but update the up-to-date flags */
-	preload_index(the_repository->index, &pathspec, 0);
+	preload_index(repo->index, &pathspec, 0);
 
 	if (add_new_files) {
 		int baselen;
