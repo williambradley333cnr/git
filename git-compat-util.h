@@ -643,7 +643,8 @@ static inline int git_has_dir_sep(const char *path)
 
 #ifndef create_symlink
 struct index_state;
-static inline int git_create_symlink(struct index_state *index, const char *target, const char *link)
+static inline int git_create_symlink(struct index_state *index UNUSED,
+				     const char *target, const char *link)
 {
 	return symlink(target, link);
 }
