@@ -542,7 +542,8 @@ static inline int git_offset_1st_component(const char *path)
 #endif
 
 #ifndef warn_about_git_lfs_on_windows7
-static inline void warn_about_git_lfs_on_windows7(int exit_code, const char *argv0)
+static inline void warn_about_git_lfs_on_windows7(int exit_code UNUSED,
+						  const char *argv0 UNUSED)
 {
 }
 #endif
